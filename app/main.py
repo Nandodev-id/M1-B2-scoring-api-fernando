@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import sys
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -86,24 +87,82 @@ async def health() -> HealthResponse:
 
 @app.get("/info")
 async def info() -> dict:
-    """Return loaded model metadata.
+    """Return loaded model metadata."""
+    if not hasattr(app.state, "metadata") or app.state.metadata is None:
+        raise HTTPException(status_code=503, detail="Metadata not loaded")
 
-    TODO — Return api_version plus the 5 mandatory metadata keys:
-    model_version, created_at, sklearn_version, dataset_sha256,
-    metrics_holdout. (model_name recommended, with a fallback.)
-    """
-    # TODO — Implement (cf. mini-cours 05_Versionning_modele_essentiel.md)
-    raise NotImplementedError("Implement /info endpoint")
+    metadata = app.state.metadata
+
+    required_keys = [
+        "model_version",
+        "created_at",
+        "sklearn_version",
+        "dataset_sha256",
+        "metrics_holdout",
+    ]
+
+    missing_keys = [key for key in required_keys if metadata.get(key) is None]
+    if missing_keys:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Missing metadata keys: {missing_keys}",
+        )
+
+    return {
+        "api_version": app.version,
+        "model_name": metadata.get("model_name", MODEL_PATH.stem),
+        "model_version": metadata["model_version"],
+        "created_at": metadata["created_at"],
+        "sklearn_version": metadata["sklearn_version"],
+        "dataset_sha256": metadata["dataset_sha256"],
+        "metrics_holdout": metadata["metrics_holdout"],
+    }
 
 
 @app.post("/predict", response_model=Prediction, status_code=status.HTTP_200_OK)
 async def predict(application: LoanApplication, request: Request) -> Prediction:
-    """Predict default risk for one loan application.
+    """Predict default risk for one loan application."""
+    if not hasattr(app.state, "model") or app.state.model is None:
+        raise HTTPException(status_code=503, detail="Model not loaded")
 
-    TODO — Implement:
-      1. Convert application to a single-row DataFrame
-      2. Call model.predict() and model.predict_proba()
-      3. Return Prediction with request_id from request.state
-    """
-    # TODO — Implement (cf. mini-cours 01_FastAPI_Pydantic_ml_essentiel.md)
-    raise NotImplementedError("Implement /predict endpoint")
+    if not hasattr(app.state, "metadata") or app.state.metadata is None:
+        raise HTTPException(status_code=503, detail="Metadata not loaded")
+
+    model = app.state.model
+    metadata = app.state.metadata
+
+    request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
+
+    try:
+        feature_columns = metadata["feature_columns"]
+        numeric_columns = feature_columns["numeric"]
+        categorical_columns = feature_columns["categorical"]
+        ordered_columns = [*numeric_columns, *categorical_columns]
+
+        application_data = application.model_dump()
+        input_df = pd.DataFrame([application_data], columns=ordered_columns)
+
+        prediction = int(model.predict(input_df)[0])
+        probabilities = model.predict_proba(input_df)[0]
+
+        classes = list(model.classes_)
+        prediction_index = classes.index(prediction)
+        probability = float(probabilities[prediction_index])
+
+        return Prediction(
+            prediction=prediction,
+            probability=probability,
+            model_version=metadata["model_version"],
+            request_id=request_id,
+        )
+
+    except Exception as exc:
+        logger.exception(
+            "Prediction failed",
+            request_id=request_id,
+            error=str(exc),
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Prediction failed",
+        ) from exc
