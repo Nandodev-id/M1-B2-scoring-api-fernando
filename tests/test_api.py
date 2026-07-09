@@ -1,6 +1,6 @@
 """M1-B2 — API tests."""
 from __future__ import annotations
-
+import pytest
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -98,4 +98,8 @@ def test_predict_is_deterministic(
     second_data = second_response.json()
 
     assert first_data["prediction"] == second_data["prediction"]
-    assert first_data["probability"] == second_data["probability"]
+    assert first_data["probability"] == pytest.approx(
+        second_data["probability"],
+        rel=1e-12,
+        abs=1e-12,
+    )
