@@ -1,162 +1,186 @@
-# M1-B2 — Squelette repo (Pyrenex Crédit scoring API)
+# M1-B2 — Pyrenex Risk API
 
-> **Repo template GitHub.** Clique sur **« Use this template »** en haut à
-> droite de cette page → **Create a new repository** → nomme-le
-> `M1-B2-scoring-api-<prénom>` sur **ton** compte GitHub personnel.
-> C'est ce nouveau repo que tu cloneras pour travailler.
+API FastAPI conteneurisée qui expose le modèle de scoring crédit `pyrenex_risk_v2.joblib` produit en M1-B1.
 
----
+Le service fournit trois routes principales :
 
-## 🚀 Démarrage
+| Route | Méthode | Rôle |
+|---|---:|---|
+| `/health` | GET | Vérifie que le modèle est chargé |
+| `/info` | GET | Expose la version API et les métadonnées modèle |
+| `/predict` | POST | Retourne une prédiction de risque de défaut |
 
-```bash
-# 0. Clone ton repo perso fraîchement créé
-git clone git@github.com:<ton-user>/M1-B2-scoring-api-<prenom>.git
-cd M1-B2-scoring-api-<prenom>
+## Architecture
 
-# 1. Environnement virtuel
-python -m venv .venv && source .venv/bin/activate     # Linux/macOS
-# .venv\Scripts\activate                              # Windows
+```mermaid
+flowchart TD
+    Client[Client IT Pyrenex / curl / Postman] --> API[FastAPI service]
 
-# 2. Dépendances
-pip install -r requirements.txt
-#    ▸ Option uv (si tu as suivi le setup avec uv) — un `uv venv` n'embarque
-#      PAS pip, il faut donc `uv pip` :
-# uv venv --python 3.11 && source .venv/bin/activate
-# uv pip install -r requirements.txt
+    API --> Health[GET /health]
+    API --> Info[GET /info]
+    API --> Predict[POST /predict]
 
-# 3. Copie ton modèle M1-B1 (cf. section « Modèle » ci-dessous) — le service
-#    ne démarre PAS sans lui
-cp ../M1-B1-scoring-<prenom>/models/pyrenex_risk_v2.joblib ./models/
-cp ../M1-B1-scoring-<prenom>/models/pyrenex_risk_v2.json   ./models/
+    API --> Middleware[LoggingMiddleware Loguru]
+    Middleware --> Logs[logs/api.log JSON]
 
-# 4. Vérification
-uvicorn app.main:app --reload                          # → démarre sans erreur
+    Info --> Metadata[models/pyrenex_risk_v2.json]
+    Predict --> Model[models/pyrenex_risk_v2.joblib]
+
+    Docker[Docker image python:3.11-slim] --> API
 ```
 
-Ensuite (autre terminal) :
+## Démarrage en 3 commandes
 
 ```bash
-curl http://localhost:8000/health                      # → 200
+docker build -t pyrenex-risk-api:v0.1.0 .
+docker run --rm -p 8000:8000 --name pyrenex-risk-api pyrenex-risk-api:v0.1.0
+curl http://localhost:8000/health
+```
+
+Réponse attendue :
+
+```json
+{"status":"ok"}
+```
+
+## Exemple `/predict`
+
+```bash
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{
+    "loan_amnt": 10000.0,
+    "int_rate": 12.5,
+    "installment": 334.2,
+    "annual_inc": 55000.0,
+    "dti": 18.5,
+    "delinq_2yrs": 0.0,
+    "fico_range_low": 690.0,
+    "revol_util": 45.2,
+    "term": "36 months",
+    "grade": "B",
+    "home_ownership": "RENT",
+    "verification_status": "Verified",
+    "purpose": "debt_consolidation",
+    "emp_length": "10+ years"
+  }'
+```
+
+Réponse attendue :
+
+```json
+{
+  "prediction": 0,
+  "probability": 0.5999567347112214,
+  "model_version": "v2.0.0",
+  "request_id": "3dd2b5ea-667c-472b-9dd3-4c44951670de"
+}
+```
+
+## `/info`
+
+```bash
 curl http://localhost:8000/info
-pytest -v                                              # → tests "skipped" tant que les TODO
-                                                       #   ne sont pas faits : c'est NORMAL au départ
 ```
 
-> ℹ️ Sans le modèle dans `models/`, uvicorn refuse de démarrer (c'est voulu :
-> une API de scoring sans modèle ne doit pas prétendre être en bonne santé)
-> et `pytest` skippe les tests avec un message explicite. Si tu vois ça,
-> retourne à l'étape 3.
+La route expose les informations nécessaires à la traçabilité :
 
----
-
-## 📁 Structure du repo
-
-```
-M1-B2-scoring-api-<prenom>/
-├── app/
-│   ├── __init__.py
-│   ├── main.py                  # FastAPI app + lifespan + routes
-│   ├── schemas.py               # Pydantic schemas (LoanApplication, Prediction)
-│   └── middleware.py            # LoggingMiddleware Loguru
-├── tests/
-│   ├── __init__.py
-│   ├── conftest.py              # fixtures pytest (client + valid_payload)
-│   ├── test_model_contract.py   # test 0 — valide le .joblib avant l'API
-│   └── test_api.py              # tests routes /health, /info, /predict
-├── models/                      # ton .joblib + .json depuis M1-B1
-│   └── .gitkeep
-├── logs/                        # logs rotatifs (gitignored)
-│   └── .gitkeep
-├── ressources/                  # 📚 mini-cours d'appui (lecture juste-à-temps)
-│   ├── 01_FastAPI_Pydantic_ml_essentiel.md
-│   ├── 02_Dockerfile_Python_essentiel.md
-│   ├── 03_Pytest_TestClient_essentiel.md
-│   ├── 04_Loguru_middleware_essentiel.md
-│   ├── 05_Versionning_modele_essentiel.md
-│   ├── liens_officiels.md
-│   └── README.md                # ordre de mobilisation + objectifs
-├── Dockerfile                   # à compléter (cf. ressources/02)
-├── .dockerignore
-├── .gitignore
-├── requirements.txt
-└── README.md (ce fichier — à compléter avec schéma Mermaid + démarrage)
+```json
+{
+  "api_version": "0.1.0",
+  "model_name": "pyrenex_risk_v2",
+  "model_version": "v2.0.0",
+  "created_at": "2026-07-06T12:40:44.631157+00:00",
+  "sklearn_version": "1.5.1",
+  "dataset_sha256": "d2da093bee40024b196e73a0d2d763193782f947e3d60552a3d7bbad0bd944e3",
+  "metrics_holdout": {
+    "f1_macro": 0.613,
+    "f1_default": 0.4364,
+    "roc_auc": 0.7371,
+    "recall_default": 0.6455
+  }
+}
 ```
 
----
+## Tests
 
-## 📚 Mini-cours d'appui
-
-Les **5 mini-cours pédagogiques** du brief sont fournis dans
-[`./ressources/`](./ressources/). Lecture juste-à-temps, ~15-20 min chacun :
-
-| Tâche | Mini-cours |
-|---|---|
-| Routes FastAPI + Pydantic ML | [`01_FastAPI_Pydantic_ml_essentiel.md`](./ressources/01_FastAPI_Pydantic_ml_essentiel.md) |
-| Dockerfile Python production | [`02_Dockerfile_Python_essentiel.md`](./ressources/02_Dockerfile_Python_essentiel.md) |
-| Tests pytest + TestClient | [`03_Pytest_TestClient_essentiel.md`](./ressources/03_Pytest_TestClient_essentiel.md) |
-| Loguru middleware structuré | [`04_Loguru_middleware_essentiel.md`](./ressources/04_Loguru_middleware_essentiel.md) |
-| Versionning sémantique modèle | [`05_Versionning_modele_essentiel.md`](./ressources/05_Versionning_modele_essentiel.md) |
-
-Cf. [`./ressources/README.md`](./ressources/README.md) pour l'ordre de mobilisation détaillé.
-
----
-
-## 📥 Modèle (depuis M1-B1)
-
-**Avant tout**, copie ton modèle M1-B1 :
+Tests locaux :
 
 ```bash
-cp ../M1-B1-scoring-<prenom>/models/pyrenex_risk_v2.joblib ./models/
-cp ../M1-B1-scoring-<prenom>/models/pyrenex_risk_v2.json   ./models/
+python -m pytest -v
 ```
 
-Le service ne démarre pas sans ces 2 fichiers.
+Tests dans le conteneur :
 
----
+```bash
+docker run --rm \
+  -v "$(pwd)/tests:/home/appuser/app/tests" \
+  pyrenex-risk-api:v0.1.0 \
+  python -m pytest -v
+```
 
-## 🧭 Démarche attendue
+Résultat validé :
 
-### Mercredi après-midi — sync (2 h 15)
+```text
+7 passed
+```
 
-1. **Sanity check** : recharger le `.joblib` dans un script séparé (5 min)
-2. **Squelette FastAPI** : `/health`, `/info`, `/predict` (1 h 15)
-3. **Dockerfile minimal** : build + run + curl OK (30 min)
-4. **Tour de table** Discord 16h30 : démo curl + discussion versionning (30 min)
+## Logs
 
-### Async jeudi/vendredi (6 h)
+Les logs applicatifs sont écrits dans :
 
-5. **Contract test** d'abord (`test_model_contract.py`) puis **tests d'API**
-   (≥ 3) en local **et** dans le container — **volume monté** en priorité
-   (voie rapide), `Dockerfile.test` en option CI/CD (cf. mini-cours 03)
-   (1 h 30)
-6. **Loguru middleware** avec `request_id` + format JSON + rotation logs.
-   ⚠️ **Aucune PII** dans les logs (cf. mini-cours 04) (45 min)
-7. **README complet** + schéma Mermaid + tag `v0.1.0-api` (2 h)
-8. **Finition** + préparation RDV vendredi (1 h 45)
+```text
+logs/api.log
+```
 
-Mini-cours d'appui : voir [`./ressources/`](./ressources/).
+Le middleware Loguru produit des logs JSON structurés sans body de requête, afin d'éviter toute fuite de PII.
 
----
+Schéma FastIA attendu :
 
-## ✅ Conventions de code
+```text
+timestamp, level, method, path, status, latency_ms, request_id
+```
 
-- Python 3.11+
-- Type hints sur toutes les signatures publiques
-- Pas de `print` — utiliser Loguru
-- `pathlib.Path` pour les chemins (pas de `os.path`)
-- Tests pytest **avec fixtures** (pas de boilerplate dupliqué)
-- Loguru en **JSON** (`serialize=True`) sur fichier, coloré en console
+Le `request_id` est aussi renvoyé dans toutes les réponses via le header :
 
----
+```text
+X-Request-ID
+```
 
-## 🆘 Bloqué·e ?
+## Versionning
 
-1. **Swagger** : ouvre `http://localhost:8000/docs` — souvent le plus
-   rapide pour débugger.
-2. **Logs** : lis `logs/api.log` pour repérer les exceptions.
-3. **Tests local d'abord, Docker ensuite** : si `pytest` est rouge en
-   local, inutile de tester Docker — fix le code d'abord.
-4. **`docker logs <container>`** : voir ce que le container raconte au
-   démarrage.
-5. Mini-cours dédiés dans [`./ressources/`](./ressources/).
+Version API :
+
+```text
+0.1.0
+```
+
+Version modèle :
+
+```text
+v2.0.0
+```
+
+La version modèle est servie par `/info` depuis :
+
+```text
+models/pyrenex_risk_v2.json
+```
+
+Tag Git attendu pour la livraison :
+
+```text
+v0.1.0-api
+```
+
+## Préparation M5
+
+Cette version M1-B2 embarque le modèle directement dans l'image Docker.
+
+Pour M5, les évolutions naturelles seront :
+
+- ajouter une CI/CD GitHub Actions ;
+- publier l'image dans un registry ;
+- ajouter une authentification réelle autour du HTTPBearer ;
+- séparer éventuellement l'image applicative et l'artefact modèle ;
+- préparer un monitoring plus complet en production.
